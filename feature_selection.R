@@ -5,6 +5,9 @@ library(DESeq2)
 library(SingleR)
 library(celldex)
 library(edgeR)
+library(ggplot2)
+library(pheatmap)
+
 
 x <- readRDS("GSE84465.rds") #scrna dataset
 gene_data <- as.data.frame(x[60:nrow(x), ])
@@ -66,14 +69,14 @@ peripheral_obj <- subset(peripheral_obj, min.cells = 3, min.features=100)
 peripheral_obj[["percent.mt"]] <- PercentageFeatureSet(peripheral_obj, pattern = "^MT-")
 peripheral_obj <- subset(peripheral_obj, subset = nFeature_RNA > 200 & nFeature_RNA < 4000 & percent.mt < 5)
 #ncol(peripheral_obj)
-pdf("scRNA_5.pdf", width = 8, height = 6)
-VlnPlot(peripheral_obj, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
-dev.off()
+#pdf("scRNA_5.pdf", width = 8, height = 6)
+#VlnPlot(peripheral_obj, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+#dev.off()
 peripheral_obj <- NormalizeData(peripheral_obj, normalization.method = "LogNormalize", scale.factor = 10000)
 peripheral_obj <- FindVariableFeatures(peripheral_obj, selection.method = "vst", nfeatures = 1500)
-pdf("scRNA_6.pdf", width = 8, height = 6)
-VariableFeaturePlot(peripheral_obj)
-dev.off()
+#pdf("scRNA_6.pdf", width = 8, height = 6)
+#VariableFeaturePlot(peripheral_obj)
+#dev.off()
 peripheral_obj <- ScaleData(peripheral_obj)
 peripheral_obj <- RunPCA(peripheral_obj, features = VariableFeatures(object = peripheral_obj))
 #ElbowPlot(tumor_obj) not needed
@@ -90,18 +93,18 @@ cell_type_counts <- table(peripheral_obj$SingleR.celltype)
 rare_cell_types <- names(cell_type_counts[cell_type_counts < threshold])
 peripheral_obj$SingleR.celltype_adjusted <- peripheral_obj$SingleR.celltype
 peripheral_obj$SingleR.celltype_adjusted[peripheral_obj$SingleR.celltype %in% rare_cell_types] <- 'Other'
-pdf("scRNA_7.pdf", width = 8, height = 6)
-DimPlot(peripheral_obj, reduction = "tsne", label = TRUE) #group.by= #change to one with annotations
-dev.off()
+#png(filename = "scRNA_7.pdf", width = 8, height = 6, units="in", res=300)
+#DimPlot(peripheral_obj, reduction = "tsne", group.by = "SingleR.celltype_adjusted", label = TRUE)
+#dev.off()
 peripheral_markers <- FindAllMarkers(peripheral_obj, min.pct = 0.25, logfc.threshold = 0.25)
 significant_peripheral_markers <- subset(peripheral_markers, p_val_adj < 0.05)
 top10_markers2 <- significant_peripheral_markers %>% 
   group_by(cluster) %>% 
   top_n(n = 10, wt = avg_log2FC)
 marker_genes2 <- top10_markers2$gene
-pdf("scRNA_8.pdf", width = 16, height = 10)
-DoHeatmap(peripheral_obj, features = marker_genes)
-dev.off()
+#pdf("scRNA_8.pdf", width = 16, height = 10)
+#DoHeatmap(peripheral_obj, features = marker_genes)
+#dev.off()
 unique_genes <- unique(significant_peripheral_markers$gene)
 genes_df <- data.frame(Gene = unique_genes)
 write.csv(genes_df, "scRNA_p_genes.csv", row.names = FALSE)
@@ -133,30 +136,71 @@ fit <- glmFit(dge, dge$design)
 lrt <- glmLRT(fit)
 top_genes <- topTags(lrt, n=20000)
 print(top_genes)
+top_genes_table <- as.data.frame(top_genes)
+gene_names <- rownames(top_genes_table)
+gene_names_df <- data.frame(Gene = gene_names)
+write.csv(gene_names_df, "scRNA_both_genes.csv", row.names = FALSE, quote = FALSE)
+#2269 genes
+saveRDS(lrt, file="lrt_results.rds")
+
 
 #visualization
 #not tested yet
 #will be scRNA_9.png
-sig_threshold <- 0.05
-logFC_threshold <- 1 
-sig_genes <- decideTestsDGE(lrt, adjust.method="BH", p.value=sig_threshold)
-sig_gene_ids <- which(sig_genes != 0) 
-sig_gene_results <- topTags(lrt, n=Inf)$table[sig_gene_ids, ]
+#following 5 lines are prob unnecessary, need to be cleaned
+#sig_threshold <- 0.05
+#logFC_threshold <- 1 
+#sig_genes <- decideTestsDGE(lrt, adjust.method="BH", p.value=sig_threshold)
+#sig_gene_ids <- which(sig_genes != 0) 
+#sig_gene_results <- topTags(lrt, n=Inf)$table[sig_gene_ids, ]
+#data_frame <- as.data.frame(lrt$table)
+#data_frame$FDR <- p.adjust(data_frame$PValue, method = "BH")
+#png(filename = "scRNA_9.png", width = 1200, height = 1200, units = "px", res = 300)
+#ggplot(data_frame, aes(x=logFC, y=-log10(PValue))) +
+#  geom_point(aes(color=FDR < sig_threshold & abs(logFC) > logFC_threshold), alpha=0.4) +
+#  scale_color_manual(values=c("grey", "red")) +
+#  labs(title="Volcano plot of differential expression",
+#       x="Log2 fold change",
+#       y="-Log10 p-value") +
+#  theme_minimal()
+#dev.off()
+
 library(ggplot2)
-ggplot(as.data.frame(lrt$table), aes(x=logFC, y=-log10(PValue))) +
-  geom_point(aes(color=adj.P.Val < sig_threshold & abs(logFC) > logFC_threshold), alpha=0.4) +
-  scale_color_manual(values=c("grey", "red")) +
-  labs(title="Volcano plot of differential expression",
-       x="Log2 fold change",
-       y="-Log10 p-value") +
-  theme_minimal()
+
+# Assuming `data_frame` contains columns for logFC, PValue, and adjusted PValue (FDR)
+# Convert p-values to -log10 scale
+#data_frame$negLog10PValue <- -log10(data_frame$PValue)
+
+# Define thresholds for significant genes
+#sig_threshold <- 0.05  # Adjusted p-value threshold for significance
+#logFC_threshold <- 1   # Log fold change threshold
+
+# Create a logical vector to highlight significant genes
+#data_frame$Significant <- data_frame$FDR < sig_threshold & abs(data_frame$logFC) > logFC_threshold
+
+# Create the volcano plot
+#ggplot(data_frame, aes(x=logFC, y=negLog10PValue, color=Significant)) +
+#  geom_point(alpha=0.8) +  # Plot points with a slight transparency
+#  scale_color_manual(values=c("grey", "red")) +  # Color non-significant in grey, significant in red
+#  labs(title="Volcano Plot of Significant Genes",
+#       x="Log2 Fold Change",
+#       y="-Log10 P-Value") +
+#  theme_minimal() +  # Use a minimal theme for a cleaner look
+#  theme(legend.position="none") +  # Hide the legend
+#  geom_vline(xintercept=c(-logFC_threshold, logFC_threshold), linetype="dashed", color="blue") +  # Dashed lines for fold change thresholds
+#  geom_hline(yintercept=-log10(sig_threshold), linetype="dashed", color="blue")  # Dashed line for p-value threshold
+
+# Save the plot
+#ggsave(filename = "scRNA_9.png", width = 12, height = 12, units = "in", dpi = 300)
+
+
 
 #heatmap
 #not tested yet
+x <- readRDS("lrt_results.rds")
 sig_gene_names <- rownames(sig_gene_results)
-heatmap_data <- counts_filtered[sig_gene_names, ]
+heatmap_data <- counts[sig_gene_names, ]
 heatmap_data_log <- log2(heatmap_data + 1)
-library(pheatmap)
 png(filename = "scRNA_10.png", width = 1200, height = 1200, units = "px", res = 300)
 pheatmap(heatmap_data_log,
          show_rownames = TRUE,
@@ -221,13 +265,38 @@ dds <- DESeq(dds)
 resultsNames(dds) # lists the coefficients
 res <- results(dds, name="cell_type_tumor_vs_normal")
 sig_genes <- res[!is.na(res$padj) & res$padj < 0.05,]
-sig_genes <- sig_genes[abs(sig_genes$log2FoldChange) > 1,]
-plot(-log10(res$pvalue), res$log2FoldChange, pch=20, main="Volcano Plot", xlab="-log10 p-value", ylab="Log2 Fold Change")
+sig_genes <- sig_genes[abs(sig_genes$log2FoldChange) > 2,]
+png(filename="bulk_1.png", width=8, height=6, units="in", res=300)
+plot(-log10(res$pvalue), res$log2FoldChange, pch=20, main="Bulk RNA-seq DEGs", xlab="-log10 p-value", ylab="Log2 Fold Change")
 with(sig_genes, points(-log10(pvalue), log2FoldChange, col="red", pch=20))
-save(sig_genes, file = "sig_genes_bulk_obj.RData")
+dev.off()
+#save(sig_genes, file = "sig_genes_bulk_obj.RData")
 sig_gene_names <- rownames(sig_genes)
 sig_gene_df <- data.frame(Gene = sig_gene_names)
-write.csv(sig_gene_df, "bulk_both_genes.csv", row.names = FALSE, quote = FALSE)
+#write.csv(sig_gene_df, "bulk_both_genes.csv", row.names = FALSE, quote = FALSE)
+
+"""
+log2_counts <- log2(sig_gene_counts + 1)
+z_score_normalized <- t(scale(t(log2_counts)))
+library(RColorBrewer)
+vibrant_palette <- colorRampPalette(c("navy", "white", "firebrick"))(100)
+pheatmap(z_score_normalized, 
+         scale = "none",
+         color=vibrant_palette,
+         clustering_distance_rows = "euclidean",
+         clustering_distance_cols = "euclidean",
+         clustering_method = "complete",
+)
+
+
+#png(filename="sig_genes_heatmap.png", width=8, height=6, units="in", res=300)
+pheatmap(heatmap_data,
+         scale = "row",
+         clustering_distance_cols = "euclidean",
+         clustering_method = "complete",
+         show_rownames = TRUE,
+         show_colnames = TRUE)
+#dev.off()
 sig_gene_exp <- cts[sig_gene_names, ]
 ordered_genes <- res[order(res$pvalue, decreasing = FALSE), ]
 top_genes <- head(ordered_genes, 20000)
@@ -265,16 +334,7 @@ if (!is.null(sig_gene_exp) && nrow(sig_gene_exp) > 0) {
 } else {
   print("No significant genes for heatmap.\n")
 }
-
-
-
-
-#plotMA(res, main="MA Plot", ylim=c(-2,2))
-#points(sig_genes$log2FoldChange, sig_genes$padj, col="red", pch=20)
-#library(pheatmap)
-#select_genes <- rownames(sig_genes)
-#normalized_counts <- assay(rlogTransformation(dds))
-#pheatmap(normalized_counts[select_genes, ], scale="row", clustering_distance_rows="euclidean", clustering_distance_cols="euclidean")
+"""
 
 x <- readRDS("DEsingleresults.rds")
 x <- x[x$norm_foldChange >= 2 | x$norm_foldChange <= -2, ]

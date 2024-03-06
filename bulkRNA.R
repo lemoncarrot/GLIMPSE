@@ -25,6 +25,8 @@ col_names <- colnames(cts)
 cts <- matrix(as.numeric(cts), nrow=nrow(cts), ncol=ncol(cts), dimnames = list(row_names, col_names))
 coldata <- data.frame(cell_type = combined_df$cell_type)
 rownames(coldata) <- colnames(cts)
+#coldata format: 1 column titled "celltype", with cell types listed (matches to columns in cts)
+#cts format: genes as rows, columns as samples (in this case, no IDs for samples)
 
 dds <- DESeqDataSetFromMatrix(countData = cts,
                               colData = coldata,

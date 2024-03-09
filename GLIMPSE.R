@@ -1,4 +1,3 @@
-# Load necessary libraries
 library(readr)
 library(limma)
 library(glmnet)
@@ -17,87 +16,48 @@ library(foreach)
 library(survminer) # for ggsurvplot
 library(timeROC)
 
-
-# Load datasets
+#LOAD DATA
 sig_genes <- read.csv('temp_67_genes.csv')
 tcga_rna <- readRDS('TCGA-GBM_rna.rds')
 tcga_meth <- readRDS('TCGA-GBM_meth.rds')
 
-# Extract significant gene IDs
+#FORMAT DATA
+#convert to list format
 gene_ids <- sig_genes$Gene
-base_gene_ids <- sapply(strsplit(gene_ids, "\\."), `[`, 1)
-
-base_gene_ids <- sapply(strsplit(base_gene_ids, "\\."), `[`, 1) # If already done, ensure it matches the RNA-seq data format
+#convert from gene version to base gene ID
+#base_gene_ids <- sapply(strsplit(gene_ids, "\\."), `[`, 1)
+#convert from gene version to base gene ID
 colnames(tcga_rna) <- sapply(strsplit(colnames(tcga_rna), "\\."), `[`, 1)
-filtered_rna_data <- tcga_rna[, c("sample", "days_to_death", "vital_status", grep(paste0("^", paste(base_gene_ids, collapse="|"), "$"), colnames(tcga_rna), value = TRUE))]
-
-# Filter RNA-seq and methylation data to include relevant columns
-filtered_rna_data <- tcga_rna[, c("sample", "days_to_death", "vital_status", base_gene_ids[base_gene_ids %in% colnames(tcga_rna)]), drop = FALSE]
+#filter for metadata + sig_genes
+filtered_rna_data <- tcga_rna[, c("sample", "days_to_death", "vital_status", grep(paste0("^", paste(gene_ids, collapse="|"), "$"), colnames(tcga_rna), value = TRUE))]
+#NEED TO FILTER HERE FOR SITES
 filtered_meth_data <- tcga_meth[, c("sample", "days_to_death", "vital_status", grep("^cg", colnames(tcga_meth), value = TRUE))]
-
-
-# Identify and retain only overlapping samples
+#filter for samples overlapping in rna and meth
 overlap_samples <- intersect(filtered_rna_data$sample, filtered_meth_data$sample)
 filtered_rna_data <- filtered_rna_data[filtered_rna_data$sample %in% overlap_samples, ]
 filtered_meth_data <- filtered_meth_data[filtered_meth_data$sample %in% overlap_samples, ]
-
 # Ensure no missing values in survival data
 complete_cases <- complete.cases(filtered_rna_data$days_to_death, filtered_rna_data$vital_status)
 filtered_rna_data <- filtered_rna_data[complete_cases, ]
 filtered_meth_data <- filtered_meth_data[complete_cases, ]
-
+combined_data <- cbind(filtered_rna_data, filtered_meth_data)
 combined_data_filtered <- combined_data[, colSums(is.na(combined_data)) < nrow(combined_data)]
-
-threshold_percentage <- 75
-# Calculate the percentage of non-NA values for each column
-percentage_non_na_per_column <- colSums(!is.na(combined_data_filtered)) / nrow(combined_data_filtered) * 100
-# Filter columns based on the threshold
-combined_data_filtered_cols <- combined_data_filtered[, percentage_non_na_per_column >= threshold_percentage]
-
-#-----------------
-# Identify columns with 100% non-NA values
-complete_cols <- colSums(is.na(combined_data_filtered_cols)) == 0
-
-# Subset the data to keep only complete columns
-data_complete_cols <- combined_data_filtered_cols[, complete_cols]
-
-# Display the structure of the filtered dataset
-str(data_complete_cols)
+complete_cols <- colSums(is.na(combined_data_filtered)) == 0
+data_complete_cols <- combined_data_filtered[, complete_cols]
+#str(data_complete_cols)
 setDT(data_complete_cols)
-
 # Extract survival-related data into a separate dataframe
 survival_data <- data_complete_cols[, .(days_to_death, vital_status)]
-
 # View the first few rows to confirm
 head(survival_data)
-
 # Remove metadata columns to prepare for Elastic Net model
 feature_data <- data_complete_cols[, !names(data_complete_cols) %in% c("sample", "days_to_death", "vital_status"), with = FALSE]
-
 # View the structure to confirm
-str(feature_data)
+#str(feature_data)
 days_to_death <- data_complete_cols$days_to_death
 
-#------------------
-# Combine RNA and Methylation data
-rna_features <- setdiff(names(filtered_rna_data), c("sample", "days_to_death", "vital_status"))
-meth_features <- setdiff(names(filtered_meth_data), c("sample", "days_to_death", "vital_status"))
-X_rna_final <- as.matrix(filtered_rna_data[, rna_features])
-X_meth_final <- as.matrix(filtered_meth_data[, meth_features])
-X_combined <- cbind(X_rna_final, X_meth_final)
 
-# Order both datasets by 'sample' column to ensure consistent sample alignment
-filtered_rna_data <- filtered_rna_data[order(filtered_rna_data$sample), ]
-filtered_meth_data <- filtered_meth_data[order(filtered_meth_data$sample), ]
 
-# Exclude the metadata columns from the methylation dataset before merging
-# Assuming 'sample' is the first column and you want to keep it from the RNA dataset
-meth_features_only <- filtered_meth_data[, -c(1, which(names(filtered_meth_data) %in% c("days_to_death", "vital_status")))]
-
-# Combine the RNA data (with metadata) and methylation features
-combined_data <- cbind(filtered_rna_data, meth_features_only)
-
-#---------------
 # Convert 'vital_status' into a binary format where, for example, "Dead" is 1 (event occurred) and others are 0 (censored)
 vital_status_binary <- as.integer(survival_data$vital_status == "Dead")
 
@@ -116,22 +76,16 @@ colnames(y) <- c("time", "status")
 x <- as.matrix(feature_data)
 
 
+
 # Assuming 'X_combined' as your feature matrix and 'days_to_death' as your response variable
 
-# Load necessary libraries
-library(caret)
-library(glmnet)
-
-# Set up cross-validation
+#cv and gridsearch
 control <- trainControl(method = "cv", number = 10, search = "grid")
-
-# Define the grid for hyperparameter tuning
 grid <- expand.grid(
   alpha = seq(0, 1, length.out = 5), # Adjust the sequence as needed
   lambda = 10^seq(-3, 3, length.out = 100) # Adjust the sequence as needed
 )
 
-# Train the model
 set.seed(123) # For reproducibility
 model <- train(
   x = feature_data,

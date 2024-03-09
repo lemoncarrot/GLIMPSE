@@ -4,6 +4,7 @@ library(limma)
 library(minfi)
 library(IlluminaHumanMethylationEPICanno.ilm10b4.hg19)
 library(IlluminaHumanMethylationEPICmanifest)
+library(methylGSA)
 library(RColorBrewer)
 library(missMethyl)
 library(minfiData)
@@ -13,7 +14,45 @@ library(stringr)
 library(GEOquery)
 library(R.utils)
 library(ggplot2)
+library(data.table)
 
+#LOADING DATA
+data <- fread("/home/dbr_journalclub/GSE90496_beta.txt.gz")
+#cpg sites (450k) as rows and samples as columns
+#pvalues included ("Detection Pval")
+#class is "data.table" 
+#cpg names in first column (not row names) ("ID_REF")
+#beta values are already numeric
+#column names are as follows: "SAMPLE X"
+
+metadata <- read.csv("GSE90496_metadata.csv")
+metadata <- metadata[, c("title", "geo_accession", "methylation.class.ch1")]
+metadata$title <- sub(".*sample (\\d+).*", "SAMPLE \\1", metadata$title)
+metadata <- as.data.table(metadata)
+#dataframe with rows as samples and columns as characteristics
+#"title" (SAMPLE X) "geo_accession" "methylation.class.ch1" ("GBM, ..." and "CONTR, ..." desired) 
+#either filter now or later
+
+#DATA PREPROCESSING INTO FORMAT
+pval_columns <- grep("Pval", names(data), value = FALSE)
+data[, (pval_columns) := NULL]
+metadata_transposed <- t(metadata_dt[, -1, with = FALSE]) # Exclude the 'title' column for transposition
+colnames(metadata_transposed) <- metadata_dt$title
+metadata_transposed_dt <- as.data.table(metadata_transposed)
+setnames(metadata_transposed_dt, colnames(metadata_transposed_dt), paste0("SAMPLE ", 1:ncol(metadata_transposed_dt)))
+metadata_for_merge <- data.table(ID_REF = c("geo_accession", "methylation.class.ch1"), metadata_transposed_dt)
+final_data <- rbindlist(list(metadata_for_merge, data), use.names = TRUE, fill = TRUE)
+
+#DATA FILTERING FOR GBM AND CONTROL
+
+
+#before input, check
+#dim(data), replace data with whatever object name
+#class(data)
+#rownames(data)
+#colnames(data)
+#dataframe of characters: converted to numeric late
+#samples as columns and features as rows
 df <- readRDS("GSE204943_meth.rds")
 #cut out first row (IDs) ///////////////
 df <- df[-1, ]
@@ -37,7 +76,7 @@ colnames(samples_info) = "sample_type"
 #design needs to be rows as samples, conditions as columns (basically metadata)
 design <- model.matrix(~0 + sample_type, data = samples_info)
 #important! convert to numeric
-df_t_numeric <- data.frame(lapply(df_t[, -1], function(x) as.numeric(as.character(x))))
+#df_t_numeric <- data.frame(lapply(df_t[, -1], function(x) as.numeric(as.character(x))))
 rownames(df_t_numeric) <- rownames(df_t)
 beta_values_matrix <- as.matrix(df_t_numeric[,-1])
 beta_values_matrix <- t(beta_values_matrix)
@@ -91,3 +130,5 @@ ggplot(DMPs, aes(x = logFC)) +
 dev.off()
 
 #heatmap here
+#possible circular graph here
+#needs to integrate ann850k with beta values, p-values, and sample conditions

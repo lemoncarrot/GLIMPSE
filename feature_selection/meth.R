@@ -1,5 +1,5 @@
 library(GEOquery)
-library(knitr)
+#library(knitr)
 library(limma)
 library(minfi)
 library(IlluminaHumanMethylationEPICanno.ilm10b4.hg19)
@@ -11,9 +11,10 @@ library(minfiData)
 library(Gviz)
 library(DMRcate)
 library(stringr)
-library(GEOquery)
 library(R.utils)
 library(ggplot2)
+
+library(limma)
 library(data.table)
 
 #LOADING DATA
@@ -25,50 +26,75 @@ data <- fread("/home/dbr_journalclub/GSE90496_beta.txt.gz")
 #beta values are already numeric
 #column names are as follows: "SAMPLE X"
 
-metadata <- read.csv("GSE90496_metadata.csv")
+metadata <- read.csv("/home/dbr_journalclub/GSE90496_metadata.csv")
 metadata <- metadata[, c("title", "geo_accession", "methylation.class.ch1")]
 metadata$title <- sub(".*sample (\\d+).*", "SAMPLE \\1", metadata$title)
 metadata <- as.data.table(metadata)
 #dataframe with rows as samples and columns as characteristics
 #"title" (SAMPLE X) "geo_accession" "methylation.class.ch1" ("GBM, ..." and "CONTR, ..." desired) 
 #either filter now or later
+cat("initial datasets loaded")
 
 #DATA PREPROCESSING INTO FORMAT
 pval_columns <- grep("Pval", names(data), value = FALSE)
 data[, (pval_columns) := NULL]
-metadata_transposed <- t(metadata_dt[, -1, with = FALSE]) # Exclude the 'title' column for transposition
-colnames(metadata_transposed) <- metadata_dt$title
+metadata_transposed <- t(metadata[, -1, with = FALSE]) # Exclude the 'title' column for transposition
+colnames(metadata_transposed) <- metadata$title
 metadata_transposed_dt <- as.data.table(metadata_transposed)
 setnames(metadata_transposed_dt, colnames(metadata_transposed_dt), paste0("SAMPLE ", 1:ncol(metadata_transposed_dt)))
 metadata_for_merge <- data.table(ID_REF = c("geo_accession", "methylation.class.ch1"), metadata_transposed_dt)
+cat("preprocessing done")
 final_data <- rbindlist(list(metadata_for_merge, data), use.names = TRUE, fill = TRUE)
+#dim(final_data)
+#[1] 428801   2802
+#class(final_data)
+#[1] "data.table" "data.frame"
+#no rownames
+#colnames SAMPLE X
+#first row GSM ID, second row glioma subtype identifier
+#first column cpg site identifier
 
 #DATA FILTERING FOR GBM AND CONTROL
+final_data[2, ] <- lapply(final_data[2, ], function(x) {
+  # Replace "ANYTEXT, XXX" with "ANYTEXT" (remove comma and anything after)
+  gsub("([^,]*),.*", "\\1", x)
+})
 
+subtypes <- final_data[2, ]
+selected_cols <- grepl("GBM|CONTR", subtypes)
+df <- final_data[, c(TRUE, selected_cols), with=FALSE]
 
-#before input, check
-#dim(data), replace data with whatever object name
-#class(data)
-#rownames(data)
-#colnames(data)
 #dataframe of characters: converted to numeric late
 #samples as columns and features as rows
-df <- readRDS("GSE204943_meth.rds")
+#df <- readRDS("GSE204943_meth.rds")
 #cut out first row (IDs) ///////////////
 df <- df[-1, ]
 #second row is factors
 #rename factors ///////////
-df[1, ] <- sapply(df[1, ], function(x) {
-  if(x == "sample_group: 1_Tumor") "tumor" else if(x == "sample_group: 2_OPL") "OPL" else if(x == "sample_group: 3_Normal") "normal" else x
-})
-cellTypes <- factor(df[1, ])
+#next 3 lines is for dataframe
+#df[1, ] <- sapply(df[1, ], function(x) {
+#  if(x == "sample_group: 1_Tumor") "tumor" else if(x == "sample_group: 2_OPL") "OPL" else if(x == "sample_group: 3_Normal") "normal" else x
+#})
+#next 6 lines is for data.table
+#might need to setDT
+#run twice with control and normal
+replace_function <- function(x) {
+  x <- ifelse(grepl("GBM", x), "tumor", x)
+  return(x)
+}
+df[1, (names(df)[-1]) := lapply(.SD, replace_function), .SDcols = names(df)[-1]]
+
+#cellTypes <- factor(df[1, ])
 #Levels: sample_group: 1_Tumor sample_group: 2_OPL sample_group: 3_Normal
 #additional filtering probably need to be performed here
-df_t <- as.data.frame(t(df))
-rownames(df_t) <- colnames(df)
-colnames(df_t) <- rownames(df)
+#df_t <- as.data.frame(t(df))
+#rownames(df_t) <- colnames(df)
+#colnames(df_t) <- rownames(df)
 #df_t: samples as rownames, condition as first column, CpG sites rest of columns
-samples_info <- data.frame(df_t[, 1])
+#samples_info <- data.frame(df_t[, 1])
+sample_names <- colnames(df)[-1]
+cell_types <- df[1, -1]  
+samples_info <- data.frame(CellType = t(cell_types), row.names = sample_names)
 colnames(samples_info) = "sample_type"
 #column name "samples_info"
 #rownames(samples_info) <- rownames(df_t)
@@ -76,14 +102,33 @@ colnames(samples_info) = "sample_type"
 #design needs to be rows as samples, conditions as columns (basically metadata)
 design <- model.matrix(~0 + sample_type, data = samples_info)
 #important! convert to numeric
-#df_t_numeric <- data.frame(lapply(df_t[, -1], function(x) as.numeric(as.character(x))))
-rownames(df_t_numeric) <- rownames(df_t)
-beta_values_matrix <- as.matrix(df_t_numeric[,-1])
-beta_values_matrix <- t(beta_values_matrix)
+columns_to_modify <- setdiff(names(df), names(df)[1])
+df[2:.N, (columns_to_modify) := lapply(.SD, function(x) as.numeric(as.character(x))), .SDcols = columns_to_modify]
+beta_values_matrix <- as.matrix(df[-1, -1, with = FALSE])
+rownames(beta_values_matrix) <- df$ID_REF[-1]
+colnames(beta_values_matrix) <- colnames(df)[-1]
+#now have numeric data table with first column as cpg sites and columns as samples 
+#(filled in with beta values)
+##df_t_numeric <- data.frame(lapply(df_t[, -1], function(x) as.numeric(as.character(x))))
+##rownames(df_t_numeric) <- rownames(df_t)
+##beta_values_matrix <- as.matrix(df_t_numeric[,-1])
+##beta_values_matrix <- t(beta_values_matrix)
+
 #dimnames(beta_values_matrix) <- list(colnames(beta_values_matrix), rownames(beta_values_matrix))
 
 #rows of design equals columns of beta_values_matrix
-fit <- lmFit(beta_values_matrix, design)
+numeric_mat <- matrix(as.numeric(as.character(beta_values_matrix)), nrow = nrow(beta_values_matrix), ncol = ncol(beta_values_matrix))
+rownames(numeric_mat) <- rownames(beta_values_matrix)
+colnames(numeric_mat) <- colnames(beta_values_matrix)
+#saved numeric_mat rds
+saveRDS(numeric_mat, "GSE90496_matrix_num2.rds")
+
+fit <- lmFit(numeric_mat, design)
+colnames(design) <- gsub(" ", "_", colnames(design)) #make syntactically valid names
+colnames(design) <- gsub(",", "_", colnames(design)) #make syntactically valid names
+colnames(design) <- gsub("/", "_", colnames(design)) #make syntactically valid names
+
+
 contMatrix <- makeContrasts(sample_typetumor - sample_typenormal, levels=design)
 
 fit2 <- contrasts.fit(fit, contMatrix)
@@ -132,3 +177,15 @@ dev.off()
 #heatmap here
 #possible circular graph here
 #needs to integrate ann850k with beta values, p-values, and sample conditions
+#needs adjusting
+pheatmap(B,
+         scale = "row",  # scale the rows (CpG sites)
+         cluster_rows = hc_rows,  
+         cluster_cols = FALSE,
+         color = colorRampPalette(c("blue", "white", "red"))(100),
+         show_rownames = FALSE,
+         show_colnames = TRUE,
+         angle_col = 45,
+         fontsize_col = 5,
+         cutree_rows = x  # Specify the number of clusters for the rows
+)

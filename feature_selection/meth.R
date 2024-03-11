@@ -1,21 +1,7 @@
-library(GEOquery)
-#library(knitr)
-library(limma)
-library(minfi)
-library(IlluminaHumanMethylationEPICanno.ilm10b4.hg19)
-library(IlluminaHumanMethylationEPICmanifest)
-library(methylGSA)
-library(RColorBrewer)
-library(missMethyl)
-library(minfiData)
-library(Gviz)
-library(DMRcate)
-library(stringr)
 library(R.utils)
-library(ggplot2)
-
 library(limma)
 library(data.table)
+library(pheatmap)
 
 #LOADING DATA
 data <- fread("/home/dbr_journalclub/GSE90496_beta.txt.gz")
@@ -132,23 +118,31 @@ colnames(design) <- gsub("/", "_", colnames(design)) #make syntactically valid n
 contMatrix <- makeContrasts(sample_typetumor - sample_typenormal, levels=design)
 
 fit2 <- contrasts.fit(fit, contMatrix)
-fit2 <- eBayes(fit2)
+#might be an issue
+#Warning message:
+#  In contrasts.fit(fit, contMatrix) :
+#  row names of contrasts don't match col names of coefficients
+#fit2 <- eBayes(fit2)
 
 # look at the numbers of DM CpGs at FDR < 0.05
 summary(decideTests(fit2))
 
+#needs extra packages
 #adjust the column selection as per your actual annotation data
 #ann850kSub <- ann850k[match(rownames(beta_values_matrix), ann850k$Name), 
 #                      c("Name", "chr", "pos", "strand", "AddressA", "AddressB", "UCSC_RefGene_Name",
 #                      "UCSC_RefGene_Accession", "UCSC_RefGene_Group")]
 #ann850kSub <- ann850kSub[!is.na(rownames(ann850kSub)), ]
 
-DMPs <- topTable(fit2, num=Inf, coef=1, genelist=ann850kSub)
+DMPs <- topTable(fit2, num=Inf, coef=1)
 head(DMPs)
+filtered_DMPs <- DMPs[abs(DMPs$logFC) > 0.1 & DMPs$adj.P.Val < 0.05, ]
+head(filtered_DMPs)
+dim(filtered_DMPs)
 
-dmr_site_names <- rownames(DMPs) #needs to be filtered
+dmr_site_names <- rownames(filtered_DMPs) #needs to be filtered
 dmr_sites_df <- data.frame(SiteNames = dmr_site_names)
-write.csv(dmr_sites_df, "dmr_site_names.csv", row.names = FALSE, quote = FALSE)
+write.csv(dmr_sites_df, "DMR_0_1.csv", row.names = FALSE, quote = FALSE)
 #KEGG analysis after this
 
 #volcano
@@ -178,14 +172,46 @@ dev.off()
 #possible circular graph here
 #needs to integrate ann850k with beta values, p-values, and sample conditions
 #needs adjusting
-pheatmap(B,
-         scale = "row",  # scale the rows (CpG sites)
-         cluster_rows = hc_rows,  
-         cluster_cols = FALSE,
-         color = colorRampPalette(c("blue", "white", "red"))(100),
-         show_rownames = FALSE,
-         show_colnames = TRUE,
-         angle_col = 45,
-         fontsize_col = 5,
-         cutree_rows = x  # Specify the number of clusters for the rows
+
+sorted_DMPs <- filtered_DMPs[order(-abs(filtered_DMPs$logFC)), ]
+top100_DMPs <- head(sorted_DMPs, 100)
+top100_sites <- rownames(top100_DMPs)
+cpg_annotations <- data.frame(
+  logFC = DMPs$logFC,
+  adj.P.Value = DMPs$adj.P.Val
 )
+rownames(cpg_annotations) <- rownames(numeric_mat)
+#samples_info = sample annotation
+dmr_mat <- numeric_mat[top100_sites, ]
+cpg_annotations <- cpg_annotations[top100_sites, ]
+
+#cool one
+png(filename="cool_3.png", width=16, height=10, units="in", res=300)
+pheatmap(dmr_mat,
+         annotation_col = samples_info,    # Column annotations: Sample attributes like tumor/normal
+         annotation_row = cpg_annotations,      # Row annotations: CpG site attributes like p-values
+         scale = "row",                        
+         clustering_distance_rows = "euclidean",
+         clustering_distance_cols = "euclidean",
+         clustering_method = "complete",
+         show_rownames = TRUE,
+         show_colnames = FALSE)
+dev.off()
+
+tumor_normal_indices <- which(samples_info$sample_type %in% c("tumor", "normal"))
+samplefilter <- rownames(samples_info)[c(tumor_normal_indices)]
+dmr_mat2 <- numeric_mat[top100_sites, samplefilter]
+
+#real one
+png(filename="meth_3.png", width=16, height=10, units="in", res=300)
+pheatmap(dmr_mat2,
+         annotation_col = samples_info,    # Column annotations: Sample attributes like tumor/normal
+         annotation_row = cpg_annotations,      # Row annotations: CpG site attributes like p-values
+         scale = "row",                       
+         clustering_distance_rows = "euclidean",
+         clustering_distance_cols = "euclidean",
+         clustering_method = "complete",
+         show_rownames = TRUE,
+         show_colnames = FALSE)
+dev.off()
+

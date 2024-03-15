@@ -4,7 +4,7 @@ library(data.table)
 library(pheatmap)
 library(IlluminaHumanMethylation450kanno.ilmn12.hg19)
 library(GenomicRanges)
-library(missMethyl)
+library(TxDb.Hsapiens.UCSC.hg19.knownGene)
 
 #LOADING DATA
 data <- fread("/home/dbr_journalclub/GSE90496_beta.txt.gz")
@@ -217,16 +217,3 @@ pheatmap(dmr_mat2,
          show_rownames = TRUE,
          show_colnames = FALSE)
 dev.off()
-
-filter01 <- read.csv("DMR_0_1.csv")
-filter02 <- read.csv("DMR_0_2.csv")
-sig.cpg <- as.list(filter02$SiteNames)
-gometh(sig.cpg, all.cpg = NULL, collection = "GO", plot.bias = FALSE, prior.prob = TRUE)
-
-library(GenomicFeatures)
-
-# Assuming `cpgSites` is your vector of CpG site IDs
-mappedGenes <- select(IlluminaHumanMethylation450kanno.ilmn12.hg19, keys=cpgSites, keytype="PROBEID", columns=c("GENE"))
-
-# View the first few mappings
-head(mappedGenes)
